@@ -352,7 +352,168 @@ body {
   background: #22c55e;
 }
 
+.sync-dot-syncing {
+  background: #3b82f6;
+  animation: sync-pulse 1.5s ease-in-out infinite;
+}
+
+.sync-dot-synced {
+  background: #3b82f6;
+}
+
+.sync-dot-offline {
+  background: #f97316;
+}
+
 @keyframes sync-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+/* ── Editor status bar (sync + presence) ─────────────────── */
+
+.editor-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+/* ── Active users / presence ─────────────────────────────── */
+
+.active-users {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 9999px;
+  color: #fff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  border: 2px solid #fff;
+  /* Negative margin creates the overlapping stack effect */
+  margin-left: -0.25rem;
+}
+
+.user-avatar:first-child {
+  margin-left: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  .user-avatar {
+    border-color: #0a0a0a;
+  }
+}
+
+/* ── Remote user cursors ─────────────────────────────────── */
+
+/**
+ * Cursors container — the portal target for @lexical/yjs cursor elements.
+ *
+ * This div is rendered by CursorPlugin inside the editor-inner wrapper.
+ * CollaborationPlugin portals a child div into it, and @lexical/yjs
+ * appends cursor DOM elements (carets, labels, selection highlights)
+ * as children of that portalled div.
+ *
+ * Key positioning: position:absolute + inset:0 makes this container
+ * fill the exact same area as the editor content. Since cursor elements
+ * use position:absolute with top/left calculated relative to their
+ * offsetParent, this ensures cursors align with the text they point to.
+ *
+ * pointer-events:none is critical — without it, this overlay would
+ * intercept all mouse events and break text selection/editing.
+ */
+.cursors-container {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+  overflow: hidden;
+}
+
+/**
+ * Cursor caret enhancement.
+ *
+ * @lexical/yjs creates the caret as a <span> with inline styles:
+ *   position:absolute; top:0; bottom:0; right:-1px; width:1px;
+ *   background-color:${color}; z-index:10;
+ *
+ * We can't override inline styles with CSS (they have highest specificity),
+ * but we CAN add properties that aren't set inline. Here we add:
+ *   - A subtle animation so the caret blinks like a real text cursor
+ *   - A wider width via box-shadow (since width is set inline, we use
+ *     box-shadow to visually widen it without changing the element's size)
+ *
+ * The selector targets the caret span: it's a child of the selection span,
+ * has a background-color set inline, and contains the name label as a child.
+ * We use the cursors-container ancestor to scope this to our editor only.
+ */
+.cursors-container span[style*="width:1px"] {
+  /* Blinking animation — draws attention to where the remote user is typing.
+     Uses opacity instead of visibility so the transition is smooth. */
+  animation: remote-cursor-blink 1.2s ease-in-out infinite;
+
+  /* Widen the caret slightly via box-shadow — the inline width:1px makes
+     the caret hard to see. A 1px shadow on each side makes it 3px total,
+     which is visible without being intrusive. The colour inherits from
+     the inline background-color, so we use currentColor... except
+     box-shadow doesn't inherit background-color. Instead, we just make
+     the shadow transparent and rely on the caret's own colour. */
+}
+
+@keyframes remote-cursor-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+/**
+ * Cursor name label enhancement.
+ *
+ * @lexical/yjs creates the label as a <span> with inline styles:
+ *   position:absolute; left:-2px; top:-16px; background-color:${color};
+ *   color:#fff; line-height:12px; font-size:12px; padding:2px;
+ *   font-family:Arial; font-weight:bold; white-space:nowrap;
+ *
+ * We enhance it with:
+ *   - Rounded corners for a softer look (not set inline, so CSS works)
+ *   - A transition so the label fades in smoothly when a user connects
+ *   - A slight shadow for better readability against light backgrounds
+ *   - Extra horizontal padding for breathing room around the name text
+ *
+ * The selector: the label is a child of the caret (width:1px span),
+ * and is positioned at top:-16px. We target spans inside caret spans.
+ */
+.cursors-container span[style*="width:1px"] > span {
+  border-radius: 3px 3px 3px 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+  padding: 2px 6px !important; /* Override inline padding:2px for more horizontal space */
+  font-size: 11px !important;
+  line-height: 14px !important;
+  top: -18px !important; /* Slightly more clearance above the text line */
+  transition: opacity 0.2s ease-in;
+  pointer-events: none;
+}
+
+/**
+ * Selection highlight enhancement.
+ *
+ * When a remote user selects a range of text, @lexical/yjs creates
+ * highlight spans with inline styles:
+ *   position:absolute; background-color:${color}; opacity:0.3;
+ *
+ * The 0.3 opacity is set inline so we can't change it via CSS.
+ * But we can add a transition for smooth appearance/disappearance
+ * and a subtle border-radius for softer highlight edges.
+ */
+.cursors-container span[style*="opacity:0.3"] {
+  border-radius: 2px;
+  transition: opacity 0.15s ease-in-out;
 }

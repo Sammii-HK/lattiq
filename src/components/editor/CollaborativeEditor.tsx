@@ -1,35 +1,43 @@
 /**
- * CollaborativeEditor — The main editor component backed by Yjs CRDTs.
+ * CollaborativeEditor — The main rich text editor component.
  *
- * ## How it works
+ * ## Architecture
  *
- * 1. useCollaboration(docId) creates a Y.Doc, persists it to IndexedDB,
- *    and waits for IndexedDB to finish loading.
- * 2. Once ready (isReady=true), we render the Lexical editor.
- * 3. CollaborationPlugin binds Lexical ↔ Y.Doc: every Lexical edit becomes
- *    a Yjs operation, and vice versa.
- * 4. y-indexeddb (set up by useCollaboration) auto-persists every Yjs
- *    operation to IndexedDB in the background.
+ * This uses Lexical (Meta's extensible text editor framework) with:
+ *   - RichTextPlugin: Core rich text editing (bold, italic, headings, etc.)
+ *   - HistoryPlugin: Undo/redo stack
+ *   - ListPlugin: Bullet and numbered lists
+ *   - LinkPlugin: Clickable hyperlinks
+ *   - ToolbarPlugin: Our custom formatting toolbar
  *
- * ## Why CollaborationPlugin instead of HistoryPlugin?
+ * ## Why HistoryPlugin (not CollaborationPlugin)?
  *
- * When Yjs manages the document, undo/redo must go through Yjs's UndoManager
- * (which understands CRDT operations) rather than Lexical's built-in history
- * (which snapshots entire editor states). CollaborationPlugin sets up
- * UndoManager automatically. Using both would create duplicate, conflicting
- * undo stacks.
+ * CollaborationPlugin bridges Lexical ↔ Yjs for real-time CRDT-based
+ * collaboration. However, @lexical/yjs imports yjs which imports lib0,
+ * and lib0's binary encoding tables cause "Unexpected end of array"
+ * errors during webpack module evaluation in Next.js.
  *
- * ## Why editorState: null?
+ * For now we use HistoryPlugin (Lexical's built-in undo/redo) which
+ * gives us a fully functional editor without the Yjs dependency.
+ * Collaboration support will be re-added once the lib0/webpack
+ * compatibility issue is resolved.
  *
- * CollaborationPlugin populates the editor from the Y.Doc. If we also set an
- * initialEditorState, they'd conflict. Passing null tells LexicalComposer
- * "don't initialize any content — the collaboration plugin will handle it."
+ * ## How Lexical works (learning reference)
+ *
+ * Lexical uses a node-based document model (like a lightweight DOM):
+ *   - RootNode: The top-level container
+ *   - ParagraphNode: A block of text
+ *   - TextNode: Inline text with formatting flags
+ *   - HeadingNode, ListNode, etc.: Specialised block types
+ *
+ * Plugins extend the editor by listening to commands and transforms.
+ * Each plugin registers itself with the editor instance provided by
+ * LexicalComposer via React context.
  *
  * ## Why key={docId}?
  *
- * When navigating between documents, we need a completely fresh Lexical
- * instance. React's key prop forces a full unmount/remount, ensuring no
- * stale state leaks between documents.
+ * When navigating between documents, React's key prop forces a full
+ * unmount/remount of the editor, ensuring no stale state leaks.
  */
 
 "use client";
@@ -37,10 +45,9 @@
 import { LexicalComposer } from "@lexical/react/LexicalComposer";
 import { RichTextPlugin } from "@lexical/react/LexicalRichTextPlugin";
 import { ContentEditable } from "@lexical/react/LexicalContentEditable";
+import { HistoryPlugin } from "@lexical/react/LexicalHistoryPlugin";
 import { ListPlugin } from "@lexical/react/LexicalListPlugin";
 import { LinkPlugin } from "@lexical/react/LexicalLinkPlugin";
-import { CollaborationPlugin } from "@lexical/react/LexicalCollaborationPlugin";
-import { LexicalCollaboration } from "@lexical/react/LexicalCollaborationContext";
 import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { HeadingNode, QuoteNode } from "@lexical/rich-text";
 import { ListNode, ListItemNode } from "@lexical/list";
@@ -49,31 +56,13 @@ import { LinkNode, AutoLinkNode } from "@lexical/link";
 
 import editorTheme from "./EditorTheme";
 import ToolbarPlugin from "./ToolbarPlugin";
-import SyncStatus from "./SyncStatus";
-import { useCollaboration } from "@/hooks/useCollaboration";
+import { bootstrapGettingStarted } from "@/lib/initial-content";
 
 function onError(error: Error) {
   console.error("Lexical error:", error);
 }
 
 export default function CollaborativeEditor({ docId }: { docId: string }) {
-  const { isReady, syncStatus, providerFactory } = useCollaboration(docId);
-
-  // Gate rendering until IndexedDB has loaded the Y.Doc.
-  // This prevents CollaborationPlugin from bootstrapping an empty document
-  // that would then conflict with persisted content arriving later.
-  if (!isReady) {
-    return (
-      <div className="editor-container">
-        <div className="editor-inner">
-          <div className="editor-input" style={{ minHeight: 400 }}>
-            <div className="editor-placeholder">Loading&hellip;</div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   const initialConfig = {
     namespace: "LattiqEditor",
     theme: editorTheme,
@@ -88,43 +77,33 @@ export default function CollaborativeEditor({ docId }: { docId: string }) {
       LinkNode,
       AutoLinkNode,
     ],
-    // null: CollaborationPlugin manages editor state from the Y.Doc
-    editorState: null,
+    // Bootstrap the "Getting Started" doc with welcome content.
+    // Other documents start with an empty editor (undefined = default).
+    editorState:
+      docId === "getting-started" ? bootstrapGettingStarted : undefined,
   };
 
   return (
-    <>
-      <SyncStatus status={syncStatus} />
-      {/* LexicalCollaboration provides the yjsDocMap context that
-          CollaborationPlugin reads internally */}
-      <LexicalCollaboration>
-        {/* key={docId} forces a full remount when switching documents */}
-        <LexicalComposer key={docId} initialConfig={initialConfig}>
-          <div className="editor-container">
-            <ToolbarPlugin />
-            <div className="editor-inner">
-              <RichTextPlugin
-                contentEditable={
-                  <ContentEditable className="editor-input" />
-                }
-                placeholder={
-                  <div className="editor-placeholder">Start writing...</div>
-                }
-                ErrorBoundary={LexicalErrorBoundary}
-              />
-              {/* CollaborationPlugin replaces HistoryPlugin — it binds
-                  Lexical ↔ Y.Doc and sets up Yjs UndoManager for undo/redo */}
-              <CollaborationPlugin
-                id={docId}
-                providerFactory={providerFactory}
-                shouldBootstrap={true}
-              />
-              <ListPlugin />
-              <LinkPlugin />
-            </div>
-          </div>
-        </LexicalComposer>
-      </LexicalCollaboration>
-    </>
+    <LexicalComposer key={docId} initialConfig={initialConfig}>
+      <div className="editor-container">
+        <ToolbarPlugin />
+        <div className="editor-inner">
+          <RichTextPlugin
+            contentEditable={
+              <ContentEditable className="editor-input" />
+            }
+            placeholder={
+              <div className="editor-placeholder">Start writing...</div>
+            }
+            ErrorBoundary={LexicalErrorBoundary}
+          />
+          {/* HistoryPlugin provides undo (Cmd+Z) and redo (Cmd+Shift+Z).
+              It tracks editor state changes as discrete history entries. */}
+          <HistoryPlugin />
+          <ListPlugin />
+          <LinkPlugin />
+        </div>
+      </div>
+    </LexicalComposer>
   );
 }
