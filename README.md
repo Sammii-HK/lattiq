@@ -28,21 +28,22 @@ Lattiq is a rich text editor where your content lives in the browser first. Chan
 ## Architecture
 
 ```
-Browser                          Server
-┌─────────────────────┐         ┌──────────────────┐
-│  Lexical Editor      │         │  WebSocket Server │
-│  ┌───────────────┐   │   WS   │  ┌─────────────┐  │
-│  │ CollabPlugin   │◄─┼────────┼─►│ Room Manager │  │
-│  └───────┬───────┘   │         │  └──────┬──────┘  │
-│          │           │         │         │         │
-│  ┌───────▼───────┐   │         │  ┌──────▼──────┐  │
-│  │   Y.Doc       │   │         │  │  .yjs files │  │
-│  └───────┬───────┘   │         │  └─────────────┘  │
-│          │           │         └──────────────────┘
-│  ┌───────▼───────┐   │
-│  │  IndexedDB    │   │
-│  └───────────────┘   │
-└─────────────────────┘
+Browser                           Server
+┌───────────────────────┐        ┌────────────────────┐
+│  Lexical Editor        │        │  WebSocket Server   │
+│                        │   WS   │                     │
+│  ┌─────────────────┐   │◄──────►│  ┌───────────────┐  │
+│  │  CollabPlugin    │   │        │  │  Room Manager  │  │
+│  └────────┬────────┘   │        │  └───────┬───────┘  │
+│           │             │        │          │          │
+│  ┌────────▼────────┐   │        │  ┌───────▼───────┐  │
+│  │     Y.Doc       │   │        │  │   .yjs files  │  │
+│  └────────┬────────┘   │        │  └───────────────┘  │
+│           │             │        └────────────────────┘
+│  ┌────────▼────────┐   │
+│  │   IndexedDB     │   │
+│  └─────────────────┘   │
+└───────────────────────┘
 ```
 
 Content flows through Yjs CRDTs. Every edit becomes a Yjs operation that is:
