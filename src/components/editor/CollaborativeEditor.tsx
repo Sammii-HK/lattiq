@@ -56,6 +56,7 @@ import { LinkNode, AutoLinkNode } from "@lexical/link";
 
 import editorTheme from "./EditorTheme";
 import ToolbarPlugin from "./ToolbarPlugin";
+import LoadContentPlugin from "./LoadContentPlugin";
 import { bootstrapGettingStarted } from "@/lib/initial-content";
 
 function onError(error: Error) {
@@ -100,6 +101,10 @@ export default function CollaborativeEditor({ docId }: { docId: string }) {
           {/* HistoryPlugin provides undo (Cmd+Z) and redo (Cmd+Shift+Z).
               It tracks editor state changes as discrete history entries. */}
           <HistoryPlugin />
+          {/* LoadContentPlugin fetches seeded Gutenberg book content
+              from the server and populates the editor. Only activates
+              for known seeded document IDs. */}
+          <LoadContentPlugin docId={docId} />
           <ListPlugin />
           <LinkPlugin />
         </div>
