@@ -36,7 +36,7 @@ export const DOCUMENTS: Document[] = [
   {
     id: "getting-started",
     title: "Getting Started",
-    description: "Welcome to Lattiq — your local-first collaborative editor.",
+    description: "Welcome to Lattiq, your local-first collaborative editor.",
   },
   {
     id: "meeting-notes",
@@ -51,7 +51,7 @@ export const DOCUMENTS: Document[] = [
   {
     id: "scratch-pad",
     title: "Scratch Pad",
-    description: "Quick notes and ideas — throw anything here.",
+    description: "Quick notes and ideas. Throw anything here.",
   },
 
   // ── Seeded Gutenberg books (run POST /api/seed to populate) ─────
@@ -65,19 +65,19 @@ export const DOCUMENTS: Document[] = [
     id: "the-yellow-wallpaper",
     title: "The Yellow Wallpaper",
     description:
-      "Charlotte Perkins Gilman's short story (~6K words) — quick editing demo.",
+      "Charlotte Perkins Gilman's short story (~6K words). Quick editing demo.",
   },
   {
     id: "alice-in-wonderland",
     title: "Alice's Adventures in Wonderland",
     description:
-      "Lewis Carroll's classic (~27K words) — a typical document size.",
+      "Lewis Carroll's classic (~27K words). A typical document size.",
   },
   {
     id: "pride-and-prejudice",
     title: "Pride and Prejudice",
     description:
-      "Jane Austen's novel (~122K words) — stress test for large documents.",
+      "Jane Austen's novel (~122K words). Stress test for large documents.",
   },
 ];
 

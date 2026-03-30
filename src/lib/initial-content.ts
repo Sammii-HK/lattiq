@@ -46,7 +46,7 @@ export function bootstrapGettingStarted(editor: LexicalEditor): void {
     const intro = $createParagraphNode();
     intro.append(
       $createTextNode(
-        "Lattiq is a local-first collaborative editor. Your changes are saved to this browser automatically — no account needed, no cloud dependency. If a collaboration server is running, your edits sync in real time with other users."
+        "Lattiq is a local-first collaborative editor. Your changes are saved to this browser automatically, no account needed, no cloud dependency. If a collaboration server is running, your edits sync in real time with other users."
       )
     );
     root.append(intro);
@@ -61,8 +61,8 @@ export function bootstrapGettingStarted(editor: LexicalEditor): void {
     const items = [
       "Local-first: Your content lives in IndexedDB in this browser. It loads instantly, works offline, and never depends on a server.",
       "Real-time sync: When the WebSocket server is running, changes merge automatically using CRDTs (Conflict-free Replicated Data Types).",
-      "Collaboration: Open this page in two browser tabs and type in both — you'll see changes appear in real time.",
-      "Persistence: Every keystroke is saved. Close the tab, reopen it — your content is still here.",
+      "Collaboration: Open this page in two browser tabs and type in both. You'll see changes appear in real time.",
+      "Persistence: Every keystroke is saved. Close the tab, reopen it and your content is still here.",
     ];
 
     for (const text of items) {

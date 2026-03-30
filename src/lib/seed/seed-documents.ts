@@ -79,19 +79,19 @@ const SEED_BOOKS: SeedBook[] = [
     docId: "the-yellow-wallpaper",
     gutenbergId: 1952,
     description:
-      "Charlotte Perkins Gilman's short story (~6K words) — quick editing demo.",
+      "Charlotte Perkins Gilman's short story (~6K words). Quick editing demo.",
   },
   {
     docId: "alice-in-wonderland",
     gutenbergId: 11,
     description:
-      "Lewis Carroll's classic (~27K words) — a typical document size.",
+      "Lewis Carroll's classic (~27K words). A typical document size.",
   },
   {
     docId: "pride-and-prejudice",
     gutenbergId: 1342,
     description:
-      "Jane Austen's novel (~122K words) — stress test for large documents.",
+      "Jane Austen's novel (~122K words). Stress test for large documents.",
   },
 ];
 
