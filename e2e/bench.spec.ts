@@ -12,6 +12,7 @@
 
 import { test, expect, type Page } from "@playwright/test";
 import * as fs from "fs";
+import * as os from "os";
 import * as path from "path";
 import * as Y from "yjs";
 import { RoomServer } from "./room-server";
@@ -19,13 +20,14 @@ import { editorText, expectState, newClient, openDoc, typeAt } from "./helpers";
 
 const RUNS = Number(process.env.BENCH_RUNS ?? 5);
 const KEYSTROKES = Number(process.env.BENCH_KEYSTROKES ?? 100);
-const MERGE_RUNS = Number(process.env.BENCH_MERGE_RUNS ?? 3);
+const MERGE_RUNS = Number(process.env.BENCH_MERGE_RUNS ?? 5);
 
 const server = new RoomServer();
 const results: Record<string, unknown> = {
   date: new Date().toISOString(),
   environment: {
-    machine: `${process.platform} ${process.arch}`,
+    machine: `${os.cpus()[0]?.model ?? process.arch}, ${os.cpus().length} cores, ${Math.round(os.totalmem() / 2 ** 30)} GB, ${process.platform}`,
+    loadAverageAtStart: os.loadavg().map((l) => Math.round(l * 10) / 10),
     node: process.version,
     browser: "system Chrome, headless (Playwright channel 'chrome')",
     build: "next build + next start (production)",
@@ -48,8 +50,10 @@ function stats(values: number[]) {
 
 test.describe.configure({ mode: "serial" });
 
-test.beforeAll(async () => {
+test.beforeAll(async ({ browser }) => {
   await server.start();
+  (results.environment as Record<string, unknown>).browser =
+    `Chrome ${browser.version()}, headless (Playwright channel 'chrome')`;
 });
 
 test.afterAll(async () => {
@@ -93,6 +97,36 @@ async function loadBook(page: Page, blocks: number) {
   };
 }
 
+/** Wait until y-indexeddb has written the document, so a reload reads it back. */
+async function waitForIndexedDb(page: Page, docId: string) {
+  for (let i = 0; i < 100; i++) {
+    const count = await page.evaluate(
+      (name) =>
+        new Promise<number>((resolve) => {
+          const req = indexedDB.open(name);
+          req.onerror = () => resolve(0);
+          req.onsuccess = () => {
+            const db = req.result;
+            if (!db.objectStoreNames.contains("updates")) {
+              db.close();
+              return resolve(0);
+            }
+            const c = db.transaction("updates", "readonly").objectStore("updates").count();
+            c.onsuccess = () => {
+              resolve(c.result);
+              db.close();
+            };
+            c.onerror = () => resolve(0);
+          };
+        }),
+      `lattiq:${docId}`
+    );
+    if (count > 0) return;
+    await page.waitForTimeout(50);
+  }
+  throw new Error("IndexedDB never received the document");
+}
+
 test("@bench load time: full-length book", async ({ browser }) => {
   const blocks = seedBlockCount(BOOK);
   const words = fs.readFileSync(path.join(".lattiq-cache", "1342.txt"), "utf8").split(/\s+/).length;
@@ -113,7 +147,7 @@ test("@bench load time: full-length book", async ({ browser }) => {
     cold.push(first.renderedAt);
     if (first.seedAppliedAt) coldSeedApplied.push(first.seedAppliedAt);
     await expectState(c.page, "synced");
-    await c.page.waitForTimeout(500); // let y-indexeddb finish writing
+    await waitForIndexedDb(c.page, BOOK);
 
     const second = await loadBook(c.page, blocks);
     warm.push(second.renderedAt);
@@ -128,8 +162,9 @@ test("@bench load time: full-length book", async ({ browser }) => {
     // Populate IndexedDB while online is impossible with the server down, so
     // the first (cold) load here seeds from HTTP; the measured one is the reload.
     await loadBook(c.page, blocks);
-    await c.page.waitForTimeout(500);
+    await waitForIndexedDb(c.page, BOOK);
     const offline = await loadBook(c.page, blocks);
+    expect(offline.seedAppliedAt, "warm load must not refetch the seed").toBeUndefined();
     warmOffline.push(offline.renderedAt);
     await c.context.close();
   }
@@ -258,8 +293,10 @@ test("@bench offline edit merge", async ({ browser }) => {
     expect(await editorText(a.page)).toBe(await editorText(b.page));
 
     runs.push({
-      // Each client: from its socket reopening to holding both edits. Worst of the two.
-      reconnectToConvergedMs: Math.max(ra.convergedAt - ra.reconnectedAt, rb.convergedAt - rb.reconnectedAt),
+      // Neither client can hold the other's edits until both sockets are
+      // open, so the merge window starts at the later of the two reconnects.
+      reconnectToConvergedMs:
+        Math.max(ra.convergedAt, rb.convergedAt) - Math.max(ra.reconnectedAt, rb.reconnectedAt),
       // Includes the reconnect backoff, which dominates.
       serverUpToConvergedMs: Math.max(ra.convergedAt, rb.convergedAt) - upAt,
       chars: textA.length + textB.length,
@@ -269,7 +306,7 @@ test("@bench offline edit merge", async ({ browser }) => {
 
   results.offlineMerge = {
     measure:
-      "two clients each type ~200 chars while the server is down; time until both hold both edits",
+      "two clients each type ~190 chars while the server is down; time from both sockets being open again until both hold both edits",
     reconnectToConvergedMs: stats(runs.map((r) => r.reconnectToConvergedMs)),
     serverUpToConvergedMs: stats(runs.map((r) => r.serverUpToConvergedMs)),
     note: "serverUpToConverged includes the client's reconnect backoff (0.5s doubling to a 30s cap, with jitter)",
