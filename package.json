@@ -15,7 +15,8 @@
     "test:e2e": "pnpm build:e2e && playwright test",
     "bench": "pnpm build:e2e && BENCH=1 playwright test",
     "lint:icons": "node scripts/lint-icons.mjs",
-    "test:icons": "node --test scripts/icons.test.mjs"
+    "test:icons": "node --test scripts/icons.test.mjs",
+    "test": "npm run test:icons"
   },
   "dependencies": {
     "@lexical/code": "^0.40.0",
