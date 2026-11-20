@@ -1,0 +1,110 @@
+{
+  "date": "2026-11-20T02:07:05.516Z",
+  "environment": {
+    "machine": "Apple M3, 8 cores, 24 GB, darwin",
+    "loadAverageAtStart": [
+      16.6,
+      20.3,
+      24
+    ],
+    "node": "v23.7.0",
+    "browser": "Chrome 157.0.8103.80, headless (Playwright channel 'chrome')",
+    "build": "next build + next start (production)",
+    "network": "localhost, no throttling"
+  },
+  "load": {
+    "document": "Pride and Prejudice: 127,360 words, 2,509 blocks",
+    "seedBytes": 1336961,
+    "measure": "navigation start to every block in the editor DOM (polled per animation frame)",
+    "coldMs": {
+      "n": 5,
+      "median": 269.4,
+      "p95": 350.1,
+      "min": 240.5,
+      "max": 350.1
+    },
+    "coldSeedAppliedMs": {
+      "n": 5,
+      "median": 239.2,
+      "p95": 297.8,
+      "min": 218.5,
+      "max": 297.8
+    },
+    "warmMs": {
+      "n": 5,
+      "median": 237.4,
+      "p95": 374.1,
+      "min": 213.3,
+      "max": 374.1
+    },
+    "warmIndexedDbLoadedMs": {
+      "n": 5,
+      "median": 182.8,
+      "p95": 292.3,
+      "min": 162.8,
+      "max": 292.3
+    },
+    "warmServerDownMs": {
+      "n": 5,
+      "median": 213.4,
+      "p95": 269.7,
+      "min": 206.1,
+      "max": 269.7
+    }
+  },
+  "keystrokeLatency": {
+    "measure": "keydown in client A to the character appearing in client B's DOM, via the room server",
+    "ms": {
+      "n": 100,
+      "median": 1.4,
+      "p95": 1.8,
+      "min": 0.8,
+      "max": 2.1
+    }
+  },
+  "offlineMerge": {
+    "measure": "two clients each type ~190 chars while the server is down; time from both sockets being open again until both hold both edits",
+    "reconnectToConvergedMs": {
+      "n": 5,
+      "median": 21.3,
+      "p95": 23.9,
+      "min": 18.5,
+      "max": 23.9
+    },
+    "serverUpToConvergedMs": {
+      "n": 5,
+      "median": 786.4,
+      "p95": 949.4,
+      "min": 591.9,
+      "max": 949.4
+    },
+    "note": "serverUpToConverged includes the client's reconnect backoff (0.5s doubling to a 30s cap, with jitter)",
+    "runs": [
+      {
+        "reconnectToConvergedMs": 19.199951171875,
+        "serverUpToConvergedMs": 949.39990234375,
+        "chars": 386
+      },
+      {
+        "reconnectToConvergedMs": 21.300048828125,
+        "serverUpToConvergedMs": 786.39990234375,
+        "chars": 386
+      },
+      {
+        "reconnectToConvergedMs": 23.900146484375,
+        "serverUpToConvergedMs": 847.900146484375,
+        "chars": 386
+      },
+      {
+        "reconnectToConvergedMs": 22.599853515625,
+        "serverUpToConvergedMs": 671,
+        "chars": 386
+      },
+      {
+        "reconnectToConvergedMs": 18.500244140625,
+        "serverUpToConvergedMs": 591.900146484375,
+        "chars": 386
+      }
+    ]
+  }
+}

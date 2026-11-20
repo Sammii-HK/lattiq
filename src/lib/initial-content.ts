@@ -1,91 +1,68 @@
 /**
- * initial-content.ts — Welcome content for the "Getting Started" document.
+ * initial-content.ts: welcome content for the "Getting Started" document.
  *
- * This function is passed to CollaborationPlugin's `initialEditorState`
- * prop. It only runs when `shouldBootstrap` is true AND the Y.Doc is
- * empty (no existing content from IndexedDB or the server).
+ * This is not run in the browser. scripts/build-seeds.ts runs it inside a
+ * headless Lexical editor bound to a Y.Doc with a fixed client ID, then
+ * writes the resulting Yjs update to public/seed/getting-started.yjs.
  *
- * ## How CollaborationPlugin bootstrapping works
+ * ## Why not CollaborationPlugin's `shouldBootstrap`?
  *
- * When shouldBootstrap=true, CollaborationPlugin checks if the shared
- * Y.XmlText (the root CRDT node) is empty. If it is, it calls this
- * function to populate the Lexical editor with initial content. Lexical
- * then syncs those nodes into the Y.Doc automatically via the binding.
- *
- * If the Y.Doc already has content (from IndexedDB or server sync),
- * shouldBootstrap is effectively ignored — the existing content wins.
- * This means this function is safe to always pass: it will never
- * overwrite existing user content.
+ * Bootstrapping writes the welcome content with the *local* client ID. Two
+ * browsers that open the document before talking to each other (offline,
+ * or simply racing) would each write their own copy, and the CRDT would
+ * faithfully merge both copies into the document. A pre-built seed has the
+ * same client ID and clocks everywhere, so applying it twice is a no-op.
  */
 
-import { $createParagraphNode, $createTextNode, $getRoot, LexicalEditor } from "lexical";
+import { $createParagraphNode, $createTextNode, $getRoot } from "lexical";
 import { $createHeadingNode } from "@lexical/rich-text";
 import { $createListNode, $createListItemNode } from "@lexical/list";
 
-/**
- * Populates the editor with welcome/guide content.
- *
- * Uses Lexical's $ prefix convention — these functions must run inside
- * an editor.update() callback (which CollaborationPlugin handles for us).
- *
- * The $ prefix is a Lexical convention that signals "this function reads
- * or writes editor state and must be called within an update/read context."
- * It's not a jQuery thing — it's Lexical's way of preventing accidental
- * calls outside the editor lifecycle.
- */
-export function bootstrapGettingStarted(editor: LexicalEditor): void {
-  editor.update(() => {
-    const root = $getRoot();
+/** Must run inside editor.update(). */
+export function $populateGettingStarted(): void {
+  const root = $getRoot();
 
-    // ── Title ──────────────────────────────────────────────────────
-    const heading = $createHeadingNode("h1");
-    heading.append($createTextNode("Welcome to Lattiq"));
-    root.append(heading);
+  const heading = $createHeadingNode("h1");
+  heading.append($createTextNode("Welcome to Lattiq"));
+  root.append(heading);
 
-    // ── Intro paragraph ────────────────────────────────────────────
-    const intro = $createParagraphNode();
-    intro.append(
-      $createTextNode(
-        "Lattiq is a local-first collaborative editor. Your changes are saved to this browser automatically, no account needed, no cloud dependency. If a collaboration server is running, your edits sync in real time with other users."
-      )
-    );
-    root.append(intro);
+  const intro = $createParagraphNode();
+  intro.append(
+    $createTextNode(
+      "Lattiq is a local-first collaborative editor. Every change is saved to this browser as you type, so the document opens instantly and keeps working offline. When the sync server is reachable, edits merge in real time with everyone else in the document."
+    )
+  );
+  root.append(intro);
 
-    // ── How it works ───────────────────────────────────────────────
-    const h2 = $createHeadingNode("h2");
-    h2.append($createTextNode("How it works"));
-    root.append(h2);
+  const h2 = $createHeadingNode("h2");
+  h2.append($createTextNode("How it works"));
+  root.append(h2);
 
-    const list = $createListNode("bullet");
+  const list = $createListNode("bullet");
+  const items = [
+    "Local-first: the document is a Yjs CRDT stored in IndexedDB. Reloading, or losing your connection, never loses work.",
+    "Real-time sync: a small WebSocket relay exchanges Yjs updates between browsers. Concurrent edits merge without conflicts.",
+    "Presence: other people's cursors, selections and names appear as they move.",
+    "Offline merge: edits made while disconnected are reconciled automatically when the connection returns.",
+  ];
+  for (const text of items) {
+    const item = $createListItemNode();
+    item.append($createTextNode(text));
+    list.append(item);
+  }
+  root.append(list);
 
-    const items = [
-      "Local-first: Your content lives in IndexedDB in this browser. It loads instantly, works offline, and never depends on a server.",
-      "Real-time sync: When the WebSocket server is running, changes merge automatically using CRDTs (Conflict-free Replicated Data Types).",
-      "Collaboration: Open this page in two browser tabs and type in both. You'll see changes appear in real time.",
-      "Persistence: Every keystroke is saved. Close the tab, reopen it and your content is still here.",
-    ];
+  const h2Try = $createHeadingNode("h2");
+  h2Try.append($createTextNode("Try it out"));
+  root.append(h2Try);
 
-    for (const text of items) {
-      const item = $createListItemNode();
-      item.append($createTextNode(text));
-      list.append(item);
-    }
-    root.append(list);
+  const tryParagraph = $createParagraphNode();
+  tryParagraph.append(
+    $createTextNode(
+      "Open this page in a second browser window and type in both. Then switch your network off, keep typing, and switch it back on."
+    )
+  );
+  root.append(tryParagraph);
 
-    // ── Try it out ─────────────────────────────────────────────────
-    const h2Try = $createHeadingNode("h2");
-    h2Try.append($createTextNode("Try it out"));
-    root.append(h2Try);
-
-    const tryParagraph = $createParagraphNode();
-    tryParagraph.append(
-      $createTextNode(
-        "Start typing below this text. Use the toolbar to format text with headings, bold, italic, lists, and more. Everything you type is saved automatically."
-      )
-    );
-    root.append(tryParagraph);
-
-    // ── Empty paragraph for the user to start typing ───────────────
-    root.append($createParagraphNode());
-  });
+  root.append($createParagraphNode());
 }

@@ -517,3 +517,21 @@ body {
   border-radius: 2px;
   transition: opacity 0.15s ease-in-out;
 }
+
+.active-users-label {
+  margin-right: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.sync-status {
+  margin-bottom: 0;
+}
+
+.sync-dot-synced {
+  background: #22c55e;
+}
+
+.sync-dot-local {
+  background: #64748b;
+}
