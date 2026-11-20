@@ -8,12 +8,14 @@
     "build": "next build",
     "start": "next start",
     "start:ws": "tsx server/index.ts",
-    "lint": "eslint",
+    "lint": "npm run lint:icons && eslint",
     "typecheck": "tsc --noEmit",
     "seed": "tsx scripts/build-seeds.ts",
     "build:e2e": "NEXT_DIST_DIR=.next-e2e NEXT_PUBLIC_WS_URL=ws://localhost:3101 next build",
     "test:e2e": "pnpm build:e2e && playwright test",
-    "bench": "pnpm build:e2e && BENCH=1 playwright test"
+    "bench": "pnpm build:e2e && BENCH=1 playwright test",
+    "lint:icons": "node scripts/lint-icons.mjs",
+    "test:icons": "node --test scripts/icons.test.mjs"
   },
   "dependencies": {
     "@lexical/code": "^0.40.0",
@@ -26,6 +28,7 @@
     "@lexical/yjs": "^0.40.0",
     "lexical": "^0.40.0",
     "lib0": "0.2.99",
+    "lucide-react": "^0.577.0",
     "next": "15.5.12",
     "react": "19.2.3",
     "react-dom": "19.2.3",

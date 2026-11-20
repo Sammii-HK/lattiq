@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getDocumentById } from "@/lib/constants";
 import CollaborativeEditor from "@/components/editor/CollaborativeEditor";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 
 export default async function DocumentPage(props: {
   params: Promise<{ id: string }>;
@@ -21,7 +22,7 @@ export default async function DocumentPage(props: {
             href="/"
             className="quiet-link"
           >
-            &larr; All documents
+            <ArrowLeft size={16} aria-hidden="true" /> All documents
           </Link>
           <h1 className="writing-room-title">{doc.title}</h1>
         </div>

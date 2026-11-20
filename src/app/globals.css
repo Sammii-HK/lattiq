@@ -545,7 +545,7 @@ body {
 .lattiq-nav, .room-footer { max-width: 1240px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
 .lattiq-nav { min-height: 100px; border-bottom: 1px solid var(--room-line); }
 .lattiq-wordmark { display: inline-flex; gap: 0.7rem; align-items: center; font-size: 1.2rem; font-weight: 600; letter-spacing: -0.06em; }
-.lattiq-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid currentColor; border-radius: 50%; font: italic 23px Georgia, serif; letter-spacing: -0.18em; padding-right: 4px; }
+.lattiq-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid currentColor; border-radius: 50%;  }
 .lattiq-edition { margin-left: 1rem; padding-left: 1.5rem; border-left: 1px solid var(--room-line); color: var(--room-muted); font-size: 0.75rem; font-weight: 400; letter-spacing: 0; }
 .quiet-link { display: inline-flex; align-items: center; gap: 0.7rem; min-height: 44px; font-size: 0.8rem; color: var(--room-muted); }
 .quiet-link:hover { color: var(--room-accent); }
@@ -613,3 +613,7 @@ body {
   .book-cover h3 { max-width: 14rem; font-size: 2.75rem; }
   .room-footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
 }
+
+.book-open { align-items: center; }
+.workspace-arrow { flex-shrink: 0; }
+.room-footer a { display: inline-flex; align-items: center; gap: 0.5rem; }
