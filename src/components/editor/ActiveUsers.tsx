@@ -1,122 +1,72 @@
-/**
- * ActiveUsers — Shows avatars of all connected collaborators.
- *
- * ## How presence works in Yjs
- *
- * Yjs's Awareness protocol is separate from the CRDT document sync.
- * While the Y.Doc uses CRDTs for persistent, conflict-free data,
- * Awareness handles ephemeral per-user state:
- *
- *   - Cursor position and selection range
- *   - User name, colour, and avatar
- *   - Online/typing status
- *
- * Awareness uses a simple last-write-wins model — each user "owns"
- * their own state and can overwrite it freely. There's no conflict
- * resolution because there's no conflict: only you can set your cursor.
- *
- * ## Why separate from the CRDT?
- *
- * Cursor positions are:
- *   1. High-frequency (every mouse move or keystroke)
- *   2. Ephemeral (you don't want yesterday's cursor showing today)
- *   3. Per-user (no conflicts possible)
- *
- * CRDTs would be overkill for this — they'd persist cursor history forever
- * and waste bandwidth on conflict resolution that isn't needed.
- *
- * ## The states Map
- *
- * awareness.getStates() returns a Map<number, object> where:
- *   - Key: Yjs clientID (unique per browser tab)
- *   - Value: the state object set by that client via setLocalStateField
- *
- * We filter out our own clientID (doc.clientID) since you don't need
- * to see your own avatar in the presence bar.
- */
-
 "use client";
+
+/**
+ * ActiveUsers: avatars for everyone in the document, from Yjs awareness.
+ *
+ * Lexical's CollaborationPlugin owns the local awareness state and writes
+ * { name, color, focusing, anchorPos, focusPos } for each client, so that's
+ * the shape read here. Awareness is ephemeral: when a client disconnects,
+ * the server removes its state and the avatar disappears.
+ */
 
 import { useEffect, useState } from "react";
 import type { Awareness } from "y-protocols/awareness";
 
-interface UserState {
+interface Person {
+  clientID: number;
   name: string;
-  colour: string;
+  color: string;
+  isLocal: boolean;
+  focusing: boolean;
 }
 
-interface ActiveUsersProps {
-  /** The Awareness instance from the collaboration provider */
-  awareness: Awareness | null;
-  /** Our own Yjs clientID — used to filter ourselves out */
-  localClientID: number;
-}
-
-export default function ActiveUsers({
-  awareness,
-  localClientID,
-}: ActiveUsersProps) {
-  // Store the list of remote users (excluding ourselves).
-  const [users, setUsers] = useState<Map<number, UserState>>(new Map());
+export default function ActiveUsers({ awareness }: { awareness: Awareness }) {
+  const [people, setPeople] = useState<Person[]>([]);
 
   useEffect(() => {
-    if (!awareness) return;
-
-    /**
-     * Update our user list whenever awareness changes.
-     *
-     * The 'change' event fires when:
-     *   - A new user connects (added)
-     *   - A user's state changes, e.g. cursor moves (updated)
-     *   - A user disconnects (removed)
-     *
-     * We rebuild the entire user map from awareness.getStates() rather
-     * than trying to incrementally update. This is simpler and the number
-     * of users is always small (typically < 20), so performance is fine.
-     */
-    function handleChange() {
-      const states = awareness!.getStates();
-      const remoteUsers = new Map<number, UserState>();
-
-      states.forEach((state, clientID) => {
-        // Skip our own entry — we don't need to see ourselves.
-        if (clientID === localClientID) return;
-
-        // Skip clients that haven't set user info yet (just connected).
-        const user = state.user as UserState | undefined;
-        if (user?.name) {
-          remoteUsers.set(clientID, user);
-        }
+    const update = () => {
+      const list: Person[] = [];
+      awareness.getStates().forEach((state, clientID) => {
+        if (typeof state.name !== "string" || !state.name) return;
+        list.push({
+          clientID,
+          name: state.name,
+          color: typeof state.color === "string" ? state.color : "#6b7280",
+          isLocal: clientID === awareness.clientID,
+          focusing: Boolean(state.focusing),
+        });
       });
-
-      setUsers(remoteUsers);
-    }
-
-    // Listen for awareness changes.
-    awareness.on("change", handleChange);
-
-    // Run once immediately to pick up any existing users.
-    handleChange();
-
-    return () => {
-      awareness.off("change", handleChange);
+      // You first, then everyone else in a stable order.
+      list.sort((a, b) => Number(b.isLocal) - Number(a.isLocal) || a.clientID - b.clientID);
+      setPeople(list);
     };
-  }, [awareness, localClientID]);
+    awareness.on("change", update);
+    update();
+    return () => awareness.off("change", update);
+  }, [awareness]);
 
-  // Don't render anything if nobody else is connected.
-  if (users.size === 0) return null;
+  if (people.length === 0) return null;
+  const others = people.filter((p) => !p.isLocal).length;
 
   return (
-    <div className="active-users" aria-label="Active collaborators">
-      {Array.from(users.entries()).map(([clientID, user]) => (
+    <div className="active-users" data-testid="active-users" data-count={people.length}>
+      <span className="active-users-label">
+        {others === 0 ? "Just you" : `${others + 1} people here`}
+      </span>
+      {people.map((p) => (
         <div
-          key={clientID}
+          key={p.clientID}
           className="user-avatar"
-          style={{ backgroundColor: user.colour }}
-          title={user.name}
+          style={{ backgroundColor: p.color, opacity: p.focusing || p.isLocal ? 1 : 0.6 }}
+          title={p.isLocal ? `${p.name} (you)` : p.name}
+          data-testid="user-avatar"
         >
-          {/* Show the first letter of the user's name as their avatar. */}
-          {user.name[0].toUpperCase()}
+          {p.name
+            .split(" ")
+            .map((w) => w[0])
+            .join("")
+            .slice(0, 2)
+            .toUpperCase()}
         </div>
       ))}
     </div>

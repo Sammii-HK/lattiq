@@ -1,539 +1,342 @@
 /**
- * Lattiq Collaboration Server — WebSocket relay for real-time Yjs sync.
+ * Lattiq room server: a WebSocket relay and persistence layer for Yjs.
  *
- * ## What this server does
+ * Each document is a room. The server keeps a Y.Doc per active room so a
+ * newcomer can sync from it even when nobody else is online, relays updates
+ * and awareness (cursors, names) between clients, and writes each room to
+ * disk a couple of seconds after it changes.
  *
- * It acts as a relay and persistence layer for Yjs documents:
+ * It is a separate process because Next.js route handlers (and Vercel
+ * functions) are request-scoped and can't hold long-lived sockets or the
+ * in-memory rooms.
  *
- * 1. **Room management**: Each document gets its own "room". When a client
- *    connects to /room-name, the server creates or retrieves a room.
+ * ## Protocol (first VarUint of every frame; matches the client)
  *
- * 2. **Sync relay**: When Client A edits, the server receives the Yjs update
- *    and broadcasts it to Clients B, C, D... in the same room. The server
- *    also maintains its own Y.Doc mirror so new clients can sync from it.
+ *   0 sync, 1 awareness, 3 query awareness, 4 ping (echoed)
  *
- * 3. **Persistence**: The server periodically saves the Y.Doc state to disk.
- *    When a room is created, it loads any previously saved state. This means
- *    document content survives server restarts.
+ * On connect the server sends only its sync step 1 (its state vector). The
+ * client answers with step 2 (what the server lacks) and sends its own
+ * step 1, which the server answers with only what the client lacks. So a
+ * client that already has the seed, or an older copy from IndexedDB,
+ * downloads just the difference, not the whole book.
  *
- * 4. **Awareness relay**: Broadcasts cursor positions and user presence to
- *    all clients in a room.
+ * ## Access control
  *
- * ## Why a server-side Y.Doc mirror?
+ *   - Room names must match /^doc-[a-z0-9-]+$/ (they become file names).
+ *   - With LATTIQ_ROOM_SECRET set, a connection must carry ?token= signed
+ *     for that exact room by the Next.js app (see src/lib/room-token.ts).
+ *     Without it, the server is open: fine for localhost, logged loudly.
+ *   - With ALLOWED_ORIGINS set, browser connections from other origins are
+ *     refused before the upgrade.
  *
- * Without it, if Client A goes offline and Client B joins, Client B would
- * have no way to get Client A's edits. The server mirror acts as a persistent
- * participant that always has the latest state.
+ * ## Environment
  *
- * ## Architecture
- *
- * This is a standalone Node.js server (not part of Next.js) because:
- *   - Next.js API routes are stateless and serverless-friendly, which is
- *     fundamentally incompatible with long-lived WebSocket connections
- *   - WebSocket connections need persistent in-memory state (the rooms)
- *   - The server needs to outlive individual HTTP request lifecycles
- *
- * In production, you'd run this alongside your Next.js app, either as a
- * separate process or via a custom Next.js server.
+ *   PORT (or WS_PORT)      default 3001
+ *   LATTIQ_ROOM_SECRET     shared with the Next.js app; enables token checks
+ *   ALLOWED_ORIGINS        comma-separated, e.g. https://lattiq.sammii.dev
+ *   LATTIQ_DATA_DIR        where rooms are persisted (default ./.lattiq-data)
+ *   LATTIQ_SEED_DIR        seed files for new rooms (default ./public/seed)
  */
 
-import { WebSocketServer, WebSocket } from "ws";
+import http from "http";
+import { WebSocketServer, WebSocket, type RawData } from "ws";
 import * as Y from "yjs";
 import * as syncProtocol from "y-protocols/sync";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as encoding from "lib0/encoding";
 import * as decoding from "lib0/decoding";
-import { IncomingMessage } from "http";
 import * as fs from "fs";
 import * as path from "path";
+import { ROOM_NAME_PATTERN, verifyRoomToken } from "../src/lib/room-token";
 
-// ── Message type constants ──────────────────────────────────────────
-// Must match the client's constants exactly.
 const MSG_SYNC = 0;
 const MSG_AWARENESS = 1;
 const MSG_QUERY_AWARENESS = 3;
+const MSG_PING = 4;
 
-// ── Room type ───────────────────────────────────────────────────────
+const CLOSE_INVALID_ROOM = 4400;
+const CLOSE_UNAUTHORISED = 4401;
+const CLOSE_ROOM_FULL = 4429;
 
-/**
- * A Room represents a single collaborative document session.
- *
- * Each room has:
- *   - A Y.Doc mirror that accumulates all edits from all clients
- *   - An Awareness instance tracking cursor positions
- *   - A set of connected WebSocket clients
- *   - Bookkeeping for persistence and cleanup
- */
-interface Room {
-  /** Room name (usually the document ID) */
-  name: string;
-  /** Server-side mirror of the document — source of truth for new clients */
-  doc: Y.Doc;
-  /** Tracks all connected users' cursor positions and presence */
-  awareness: awarenessProtocol.Awareness;
-  /** All WebSocket connections currently in this room */
-  clients: Map<WebSocket, { clientID: number }>;
-  /** Timestamp of last activity — used for idle room cleanup */
-  lastActivity: number;
-  /** Debounce timer for persistence writes */
-  persistTimer: ReturnType<typeof setTimeout> | null;
+const PORT = parseInt(process.env.PORT ?? process.env.WS_PORT ?? "3001", 10);
+const SECRET = process.env.LATTIQ_ROOM_SECRET || null;
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const DATA_DIR = path.resolve(process.env.LATTIQ_DATA_DIR ?? ".lattiq-data");
+const SEED_DIR = path.resolve(process.env.LATTIQ_SEED_DIR ?? "public/seed");
+
+const PERSIST_DEBOUNCE_MS = 2000;
+const IDLE_ROOM_MS = 5 * 60 * 1000;
+const MAX_CLIENTS_PER_ROOM = 50;
+const MAX_MESSAGE_BYTES = 8 * 1024 * 1024; // a full book's first sync is ~1.3 MB
+
+// ── Persistence ───────────────────────────────────────────────────────
+
+function roomFile(room: string) {
+  return path.join(DATA_DIR, `${room}.yjs`);
 }
 
-// ── Persistence directory ───────────────────────────────────────────
-// We store Yjs document state as binary files on disk. In production,
-// you'd use PostgreSQL or S3 — but files work great for development
-// and keep this project dependency-free.
-const DATA_DIR = path.join(process.cwd(), ".lattiq-data");
-
-/** Ensure the data directory exists on startup. */
-function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-  }
-}
-
-/**
- * Load a previously saved document from disk.
- *
- * Returns null if no saved state exists (new document).
- * The saved state is a binary Yjs update that can be applied to a
- * fresh Y.Doc to restore it to its last known state.
- */
-function loadDocument(roomName: string): Uint8Array | null {
-  const filePath = path.join(DATA_DIR, `${roomName}.yjs`);
-  if (fs.existsSync(filePath)) {
-    return new Uint8Array(fs.readFileSync(filePath));
+/** Saved state if the room has been used before, else the document's seed. */
+function loadRoomState(room: string): Uint8Array | null {
+  for (const file of [roomFile(room), path.join(SEED_DIR, `${room.slice(4)}.yjs`)]) {
+    if (fs.existsSync(file)) return new Uint8Array(fs.readFileSync(file));
   }
   return null;
 }
 
-/**
- * Save a document to disk.
- *
- * We write the full encoded state (Y.encodeStateAsUpdate), not individual
- * updates. This acts as a snapshot — loading it gives you the complete
- * document without needing to replay history.
- */
-function saveDocument(roomName: string, state: Uint8Array) {
-  const filePath = path.join(DATA_DIR, `${roomName}.yjs`);
-  fs.writeFileSync(filePath, state);
+/** Write to a temp file then rename, so a crash mid-write can't corrupt a room. */
+function saveRoomState(room: string, state: Uint8Array) {
+  const file = roomFile(room);
+  const tmp = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, state);
+  fs.renameSync(tmp, file);
 }
 
-// ── Collaboration Server ────────────────────────────────────────────
+// ── Rooms ─────────────────────────────────────────────────────────────
 
-class CollaborationServer {
-  /** Map of room name to Room instance */
-  private rooms = new Map<string, Room>();
-  private wss: WebSocketServer;
+interface Room {
+  name: string;
+  doc: Y.Doc;
+  awareness: awarenessProtocol.Awareness;
+  /** Each socket and the awareness client IDs it controls. */
+  conns: Map<WebSocket, Set<number>>;
+  lastActivity: number;
+  persistTimer: ReturnType<typeof setTimeout> | null;
+}
 
-  /**
-   * How long a room can be idle (no connected clients, no activity)
-   * before we destroy it to free memory. Set to 5 minutes.
-   */
-  private IDLE_TIMEOUT = 5 * 60 * 1000;
+const rooms = new Map<string, Room>();
 
-  /**
-   * How long to wait after the last edit before persisting to disk.
-   *
-   * We don't want to write to disk on every single keystroke — that
-   * would be wasteful I/O. Instead, we debounce: wait 2 seconds after
-   * the last edit, then save. If another edit comes in during the wait,
-   * the timer resets.
-   *
-   * This means we save at most once every 2 seconds, and we always
-   * capture the latest state.
-   */
-  private PERSIST_DEBOUNCE = 2000;
+function send(ws: WebSocket, message: Uint8Array) {
+  if (ws.readyState === WebSocket.OPEN) ws.send(message);
+}
 
-  constructor(port: number) {
-    ensureDataDir();
+function broadcast(room: Room, message: Uint8Array, except: unknown) {
+  room.conns.forEach((_, ws) => {
+    if (ws !== except) send(ws, message);
+  });
+}
 
-    this.wss = new WebSocketServer({ port });
+function persistNow(room: Room) {
+  if (room.persistTimer) clearTimeout(room.persistTimer);
+  room.persistTimer = null;
+  saveRoomState(room.name, Y.encodeStateAsUpdate(room.doc));
+}
 
-    this.wss.on("connection", this.handleConnection);
+function getRoom(name: string): Room {
+  const existing = rooms.get(name);
+  if (existing) return existing;
 
-    // Periodically clean up rooms that have no connected clients.
-    // This prevents memory leaks from abandoned rooms.
-    setInterval(() => this.cleanupIdleRooms(), 60_000);
+  const doc = new Y.Doc();
+  const saved = loadRoomState(name);
+  if (saved) Y.applyUpdate(doc, saved);
 
-    console.log(`Lattiq collaboration server running on ws://localhost:${port}`);
-  }
+  const awareness = new awarenessProtocol.Awareness(doc);
+  awareness.setLocalState(null); // the server isn't a participant
 
-  // ── Connection handling ─────────────────────────────────────────
-
-  /**
-   * Handle a new WebSocket connection.
-   *
-   * The connection flow:
-   *
-   * 1. Parse the room name from the URL path (e.g. /doc-getting-started)
-   * 2. Get or create the room (loading from disk if it exists)
-   * 3. Add the client to the room
-   * 4. Send the client the full document state (sync step 1 + 2)
-   * 5. Send the client all current awareness states (other users' cursors)
-   * 6. Start listening for messages from this client
-   *
-   * This is the server-side counterpart to the client's connect() method.
-   */
-  private handleConnection = (ws: WebSocket, req: IncomingMessage) => {
-    const url = new URL(req.url!, `http://${req.headers.host}`);
-    // The room name is the URL path without the leading slash.
-    // e.g. ws://localhost:3001/doc-getting-started → "doc-getting-started"
-    const roomName = url.pathname.slice(1);
-
-    // Future: authenticate the connection using the token query param.
-    // const token = url.searchParams.get("token");
-    // const user = await authenticate(token);
-    // if (!user) { ws.close(4401, 'Unauthorized'); return; }
-
-    const room = this.getOrCreateRoom(roomName);
-    // We don't know the client's Yjs clientID yet — it will be sent
-    // with their first awareness update. Store 0 as placeholder.
-    room.clients.set(ws, { clientID: 0 });
-    room.lastActivity = Date.now();
-
-    // ── Send sync step 1: our state vector ────────────────────
-    // Tell the client "here's what I (the server) have". The client
-    // will compare this against its local doc and send back anything
-    // the server is missing.
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, MSG_SYNC);
-    syncProtocol.writeSyncStep1(encoder, room.doc);
-    ws.send(encoding.toUint8Array(encoder));
-
-    // ── Send sync step 2: the full document diff ──────────────
-    // Also send our full state. This ensures the client gets everything
-    // even if it's connecting for the first time with an empty doc.
-    // Belt and suspenders — the client might already have some state
-    // from IndexedDB, and CRDTs handle the merge gracefully.
-    const encoder2 = encoding.createEncoder();
-    encoding.writeVarUint(encoder2, MSG_SYNC);
-    syncProtocol.writeSyncStep2(encoder2, room.doc);
-    ws.send(encoding.toUint8Array(encoder2));
-
-    // ── Send current awareness states ─────────────────────────
-    // Send all currently connected users' cursor positions and info
-    // so the new client can render them immediately.
-    const awarenessStates = room.awareness.getStates();
-    if (awarenessStates.size > 0) {
-      const awarenessUpdate = awarenessProtocol.encodeAwarenessUpdate(
-        room.awareness,
-        Array.from(awarenessStates.keys())
-      );
-      const aEncoder = encoding.createEncoder();
-      encoding.writeVarUint(aEncoder, MSG_AWARENESS);
-      encoding.writeVarUint8Array(aEncoder, awarenessUpdate);
-      ws.send(encoding.toUint8Array(aEncoder));
-    }
-
-    // ── Handle incoming messages from this client ─────────────
-    ws.on("message", (data: Buffer) => {
-      const message = new Uint8Array(data);
-
-      // Single byte = heartbeat ping. Respond with pong.
-      if (message.length === 1) {
-        ws.send(new Uint8Array([1])); // pong
-        return;
-      }
-
-      const decoder = decoding.createDecoder(message);
-      const msgType = decoding.readVarUint(decoder);
-
-      switch (msgType) {
-        case MSG_SYNC:
-          this.handleSync(decoder, room, ws);
-          break;
-        case MSG_AWARENESS:
-          this.handleAwareness(decoder, room, ws);
-          break;
-        case MSG_QUERY_AWARENESS:
-          this.handleQueryAwareness(room, ws);
-          break;
-      }
-
-      room.lastActivity = Date.now();
-    });
-
-    // ── Handle client disconnect ──────────────────────────────
-    ws.on("close", () => {
-      const clientMeta = room.clients.get(ws);
-      room.clients.delete(ws);
-
-      // Remove this client's awareness state so other users see them
-      // disappear. We use the clientID we captured from their awareness
-      // updates.
-      if (clientMeta && clientMeta.clientID > 0) {
-        awarenessProtocol.removeAwarenessStates(
-          room.awareness,
-          [clientMeta.clientID],
-          null
-        );
-
-        // Broadcast the removal to remaining clients.
-        const awarenessUpdate = awarenessProtocol.encodeAwarenessUpdate(
-          room.awareness,
-          [clientMeta.clientID]
-        );
-        this.broadcastAwareness(room, awarenessUpdate, ws);
-      }
-    });
+  const room: Room = {
+    name,
+    doc,
+    awareness,
+    conns: new Map(),
+    lastActivity: Date.now(),
+    persistTimer: null,
   };
 
-  // ── Sync message handling ─────────────────────────────────────
-
-  /**
-   * Handle an incoming sync message from a client.
-   *
-   * readSyncMessage does the heavy lifting:
-   *   - If it's SyncStep1 from the client, it writes our SyncStep2 reply
-   *   - If it's SyncStep2, it applies the client's state to our doc
-   *   - If it's an Update, it applies the incremental change to our doc
-   *
-   * After applying an update, the Y.Doc 'update' event fires, which
-   * triggers broadcastUpdate to relay the change to other clients.
-   */
-  private handleSync(
-    decoder: decoding.Decoder,
-    room: Room,
-    sender: WebSocket
-  ) {
+  // Relay every change to everyone except the client it came from.
+  doc.on("update", (update: Uint8Array, origin: unknown) => {
     const encoder = encoding.createEncoder();
     encoding.writeVarUint(encoder, MSG_SYNC);
-
-    // readSyncMessage reads the incoming message, applies updates to
-    // room.doc, and writes any necessary response into the encoder.
-    // The 'sender' argument is passed as the transaction origin so
-    // we can filter it out in the broadcast handler.
-    syncProtocol.readSyncMessage(decoder, encoder, room.doc, sender);
-
-    // If the encoder has content beyond the message type byte,
-    // send the response back to the sender (e.g. SyncStep2 reply).
-    if (encoding.length(encoder) > 1) {
-      sender.send(encoding.toUint8Array(encoder));
-    }
-  }
-
-  // ── Awareness message handling ────────────────────────────────
-
-  /**
-   * Handle an incoming awareness message from a client.
-   *
-   * Awareness messages contain cursor positions, user names, colours,
-   * and other ephemeral per-user state. We:
-   *
-   * 1. Apply the update to our server-side Awareness instance (so we
-   *    have an accurate picture of who's connected)
-   * 2. Extract the sender's clientID and store it (needed for cleanup
-   *    when they disconnect)
-   * 3. Broadcast the update to all OTHER clients in the room
-   */
-  private handleAwareness(
-    decoder: decoding.Decoder,
-    room: Room,
-    sender: WebSocket
-  ) {
-    const update = decoding.readVarUint8Array(decoder);
-    awarenessProtocol.applyAwarenessUpdate(room.awareness, update, sender);
-
-    // Extract the sender's Yjs clientID from the awareness update.
-    // We need this to clean up their awareness state when they disconnect.
-    // The awareness update is encoded as: [length, clientID, clock, state...]
-    // We decode just the clientID from the first entry.
-    try {
-      const updateDecoder = decoding.createDecoder(update);
-      const count = decoding.readVarUint(updateDecoder);
-      if (count > 0) {
-        const clientID = decoding.readVarUint(updateDecoder);
-        const clientMeta = room.clients.get(sender);
-        if (clientMeta) {
-          clientMeta.clientID = clientID;
-        }
-      }
-    } catch {
-      // If we can't parse the clientID, that's ok — we just won't be
-      // able to clean up this client's awareness on disconnect.
-    }
-
-    // Broadcast to all other clients in the room.
-    this.broadcastAwareness(room, update, sender);
-  }
-
-  /**
-   * Handle a query for all current awareness states.
-   *
-   * A client sends this when it first connects and wants to know
-   * about all other users currently in the room. We respond with
-   * the full awareness state.
-   */
-  private handleQueryAwareness(room: Room, sender: WebSocket) {
-    const states = room.awareness.getStates();
-    if (states.size === 0) return;
-
-    const update = awarenessProtocol.encodeAwarenessUpdate(
-      room.awareness,
-      Array.from(states.keys())
-    );
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, MSG_AWARENESS);
-    encoding.writeVarUint8Array(encoder, update);
-    sender.send(encoding.toUint8Array(encoder));
-  }
-
-  /**
-   * Broadcast an awareness update to all clients in a room except the sender.
-   */
-  private broadcastAwareness(
-    room: Room,
-    update: Uint8Array,
-    sender: WebSocket
-  ) {
-    const encoder = encoding.createEncoder();
-    encoding.writeVarUint(encoder, MSG_AWARENESS);
-    encoding.writeVarUint8Array(encoder, update);
-    const message = encoding.toUint8Array(encoder);
-
-    room.clients.forEach((_, client) => {
-      if (client !== sender && client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
-  }
-
-  // ── Room management ───────────────────────────────────────────
-
-  /**
-   * Get an existing room or create a new one.
-   *
-   * When creating a new room:
-   * 1. Create a fresh Y.Doc
-   * 2. Load any previously saved state from disk
-   * 3. Set up listeners to broadcast updates and persist changes
-   *
-   * The room's Y.Doc acts as a "server peer" — it participates in the
-   * CRDT just like any client. This means the server always has the
-   * complete, merged document state.
-   */
-  private getOrCreateRoom(name: string): Room {
-    const existing = this.rooms.get(name);
-    if (existing) return existing;
-
-    const doc = new Y.Doc();
-
-    // Load previously saved state from disk.
-    const savedState = loadDocument(name);
-    if (savedState) {
-      Y.applyUpdate(doc, savedState);
-    }
-
-    // When the Y.Doc changes (from any client's sync message),
-    // broadcast the update to all other clients and schedule a persist.
-    doc.on("update", (update: Uint8Array, origin: unknown) => {
-      const room = this.rooms.get(name);
-      if (!room) return;
-
-      // Broadcast to all clients except the one that sent the update.
-      // The 'origin' is the WebSocket that sent the message (set in
-      // handleSync via readSyncMessage's last argument).
-      const encoder = encoding.createEncoder();
-      encoding.writeVarUint(encoder, MSG_SYNC);
-      syncProtocol.writeUpdate(encoder, update);
-      const message = encoding.toUint8Array(encoder);
-
-      room.clients.forEach((_, client) => {
-        if (client !== origin && client.readyState === WebSocket.OPEN) {
-          client.send(message);
-        }
-      });
-
-      // Schedule a debounced persist to disk.
-      this.schedulePersist(name);
-    });
-
-    const awareness = new awarenessProtocol.Awareness(doc);
-
-    const room: Room = {
-      name,
-      doc,
-      awareness,
-      clients: new Map(),
-      lastActivity: Date.now(),
-      persistTimer: null,
-    };
-
-    this.rooms.set(name, room);
-    return room;
-  }
-
-  // ── Persistence ───────────────────────────────────────────────
-
-  /**
-   * Schedule a debounced persist of a room's document to disk.
-   *
-   * ## Why debounce?
-   *
-   * Every keystroke generates a Yjs update. Writing to disk on every
-   * keystroke would be wasteful — the OS would be constantly flushing
-   * tiny writes. Instead, we wait 2 seconds after the last edit.
-   * If more edits come in during the wait, the timer resets.
-   *
-   * This means:
-   *   - During active typing: no disk writes (timer keeps resetting)
-   *   - 2 seconds after the user stops: one write with everything
-   *   - Worst case data loss on crash: last 2 seconds of edits
-   *     (but the client's IndexedDB still has them — local-first!)
-   */
-  private schedulePersist(roomName: string) {
-    const room = this.rooms.get(roomName);
-    if (!room) return;
+    syncProtocol.writeUpdate(encoder, update);
+    broadcast(room, encoding.toUint8Array(encoder), origin);
 
     if (room.persistTimer) clearTimeout(room.persistTimer);
+    room.persistTimer = setTimeout(() => persistNow(room), PERSIST_DEBOUNCE_MS);
+  });
 
-    room.persistTimer = setTimeout(() => {
-      const state = Y.encodeStateAsUpdate(room.doc);
-      saveDocument(roomName, state);
-    }, this.PERSIST_DEBOUNCE);
-  }
-
-  // ── Idle room cleanup ─────────────────────────────────────────
-
-  /**
-   * Destroy rooms that have no clients and haven't been active recently.
-   *
-   * ## Why bother?
-   *
-   * Each room holds a Y.Doc in memory. For a document with lots of edit
-   * history, this can be significant (MBs). If nobody is connected and
-   * nobody has been for 5 minutes, we:
-   *
-   * 1. Save the final state to disk (so nothing is lost)
-   * 2. Destroy the Y.Doc to free memory
-   * 3. Remove the room from our Map
-   *
-   * When someone reconnects, getOrCreateRoom() will reload from disk.
-   */
-  private cleanupIdleRooms() {
-    const now = Date.now();
-
-    this.rooms.forEach((room, name) => {
-      if (
-        room.clients.size === 0 &&
-        now - room.lastActivity > this.IDLE_TIMEOUT
-      ) {
-        // Persist final state before cleanup.
-        const state = Y.encodeStateAsUpdate(room.doc);
-        saveDocument(name, state);
-
-        // Clean up.
-        room.doc.destroy();
-        room.awareness.destroy();
-        if (room.persistTimer) clearTimeout(room.persistTimer);
-        this.rooms.delete(name);
-        console.log(`Cleaned up idle room: ${name}`);
+  // Track which awareness IDs each socket owns (so we can remove them when
+  // it drops) and relay awareness changes.
+  awareness.on(
+    "update",
+    (
+      { added, updated, removed }: { added: number[]; updated: number[]; removed: number[] },
+      origin: unknown
+    ) => {
+      const owned = origin instanceof WebSocket ? room.conns.get(origin) : undefined;
+      if (owned) {
+        // A client that clears its state and sets it again (Lexical does on
+        // page hide, then blur) comes back as "updated", not "added", so
+        // both count as owned.
+        added.forEach((id) => owned.add(id));
+        updated.forEach((id) => owned.add(id));
+        removed.forEach((id) => owned.delete(id));
       }
-    });
+      const changed = [...added, ...updated, ...removed];
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, MSG_AWARENESS);
+      encoding.writeVarUint8Array(
+        encoder,
+        awarenessProtocol.encodeAwarenessUpdate(awareness, changed)
+      );
+      broadcast(room, encoding.toUint8Array(encoder), origin);
+    }
+  );
+
+  rooms.set(name, room);
+  return room;
+}
+
+// ── Connections ───────────────────────────────────────────────────────
+
+function onMessage(room: Room, ws: WebSocket, data: Uint8Array) {
+  room.lastActivity = Date.now();
+  const decoder = decoding.createDecoder(data);
+  const type = decoding.readVarUint(decoder);
+
+  switch (type) {
+    case MSG_SYNC: {
+      const reply = encoding.createEncoder();
+      encoding.writeVarUint(reply, MSG_SYNC);
+      syncProtocol.readSyncMessage(decoder, reply, room.doc, ws);
+      if (encoding.length(reply) > 1) send(ws, encoding.toUint8Array(reply));
+      break;
+    }
+    case MSG_AWARENESS:
+      awarenessProtocol.applyAwarenessUpdate(room.awareness, decoding.readVarUint8Array(decoder), ws);
+      break;
+    case MSG_QUERY_AWARENESS: {
+      const ids = [...room.awareness.getStates().keys()];
+      if (ids.length === 0) break;
+      const encoder = encoding.createEncoder();
+      encoding.writeVarUint(encoder, MSG_AWARENESS);
+      encoding.writeVarUint8Array(encoder, awarenessProtocol.encodeAwarenessUpdate(room.awareness, ids));
+      send(ws, encoding.toUint8Array(encoder));
+      break;
+    }
+    case MSG_PING: {
+      const pong = encoding.createEncoder();
+      encoding.writeVarUint(pong, MSG_PING);
+      send(ws, encoding.toUint8Array(pong));
+      break;
+    }
   }
 }
 
-// ── Start the server ────────────────────────────────────────────────
-const PORT = parseInt(process.env.WS_PORT ?? "3001", 10);
-new CollaborationServer(PORT);
+function onConnection(ws: WebSocket, roomName: string) {
+  const room = getRoom(roomName);
+  if (room.conns.size >= MAX_CLIENTS_PER_ROOM) {
+    ws.close(CLOSE_ROOM_FULL, "Room full");
+    return;
+  }
+  room.conns.set(ws, new Set());
+  room.lastActivity = Date.now();
+
+  // Liveness: ws-level pings catch sockets that died without a close frame.
+  let alive = true;
+  ws.on("pong", () => (alive = true));
+  const pinger = setInterval(() => {
+    if (!alive) return ws.terminate();
+    alive = false;
+    ws.ping();
+  }, 30_000);
+
+  ws.on("message", (raw: RawData) => {
+    try {
+      const data = raw instanceof ArrayBuffer ? new Uint8Array(raw) : new Uint8Array(raw as Buffer);
+      onMessage(room, ws, data);
+    } catch (err) {
+      console.warn(`[${roomName}] bad message, closing:`, (err as Error).message);
+      ws.close(1003, "Bad message");
+    }
+  });
+
+  ws.on("close", () => {
+    clearInterval(pinger);
+    const owned = room.conns.get(ws);
+    room.conns.delete(ws);
+    room.lastActivity = Date.now();
+    if (owned?.size) {
+      awarenessProtocol.removeAwarenessStates(room.awareness, [...owned], null);
+    }
+  });
+
+  // Our state vector; the client replies with whatever we're missing.
+  const step1 = encoding.createEncoder();
+  encoding.writeVarUint(step1, MSG_SYNC);
+  syncProtocol.writeSyncStep1(step1, room.doc);
+  send(ws, encoding.toUint8Array(step1));
+}
+
+// ── HTTP + upgrade ────────────────────────────────────────────────────
+
+const server = http.createServer((req, res) => {
+  if (req.url === "/healthz") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, rooms: rooms.size }));
+    return;
+  }
+  res.writeHead(404).end();
+});
+
+const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
+
+server.on("upgrade", (req, socket, head) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.length && origin && !ALLOWED_ORIGINS.includes(origin)) {
+    socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    return;
+  }
+
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const roomName = url.pathname.slice(1);
+
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    // Rejections happen after the upgrade so the browser sees a close code
+    // it can act on (a failed handshake only ever reports 1006).
+    if (!ROOM_NAME_PATTERN.test(roomName)) {
+      ws.close(CLOSE_INVALID_ROOM, "Invalid room");
+      return;
+    }
+    if (SECRET && !verifyRoomToken(SECRET, roomName, url.searchParams.get("token"))) {
+      ws.close(CLOSE_UNAUTHORISED, "Unauthorised");
+      return;
+    }
+    onConnection(ws, roomName);
+  });
+});
+
+// ── Housekeeping ──────────────────────────────────────────────────────
+
+setInterval(() => {
+  const now = Date.now();
+  rooms.forEach((room, name) => {
+    if (room.conns.size === 0 && now - room.lastActivity > IDLE_ROOM_MS) {
+      persistNow(room);
+      room.awareness.destroy();
+      room.doc.destroy();
+      rooms.delete(name);
+    }
+  });
+}, 60_000).unref();
+
+function shutdown(signal: string) {
+  console.log(`${signal}: saving ${rooms.size} room(s)`);
+  rooms.forEach((room) => {
+    if (room.persistTimer) persistNow(room);
+  });
+  wss.clients.forEach((ws) => ws.close(1001, "Server restarting"));
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 1000).unref();
+}
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+fs.mkdirSync(DATA_DIR, { recursive: true });
+server.listen(PORT, () => {
+  console.log(`Lattiq room server on ws://localhost:${PORT}`);
+  console.log(`  data: ${DATA_DIR}`);
+  console.log(`  seeds: ${SEED_DIR}`);
+  if (!SECRET) console.warn("  LATTIQ_ROOM_SECRET not set: any client can open any valid room");
+  if (ALLOWED_ORIGINS.length) console.log(`  origins: ${ALLOWED_ORIGINS.join(", ")}`);
+});
