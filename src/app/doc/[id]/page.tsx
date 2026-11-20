@@ -14,18 +14,19 @@ export default async function DocumentPage(props: {
   }
 
   return (
-    <div className="min-h-screen bg-background p-8">
-      <div className="mx-auto max-w-4xl">
-        <div className="mb-6 flex items-center gap-4">
+    <div className="lattiq-shell writing-room">
+      <div className="writing-room-inner">
+        <div className="writing-room-heading">
           <Link
             href="/"
-            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            className="quiet-link"
           >
-            &larr; Back
+            &larr; All documents
           </Link>
-          <h1 className="text-2xl font-bold text-foreground">{doc.title}</h1>
+          <h1 className="writing-room-title">{doc.title}</h1>
         </div>
         <CollaborativeEditor docId={id} />
+        <p className="writing-room-footnote">A writing room by Lattiq. Your connection and saving state are shown above the page.</p>
       </div>
     </div>
   );

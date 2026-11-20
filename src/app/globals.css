@@ -535,3 +535,81 @@ body {
 .sync-dot-local {
   background: #64748b;
 }
+
+/* Lattiq's writing room: warm paper, editorial type, clear storage boundaries. */
+:root { --room-paper: #f6f3ed; --room-ink: #292724; --room-muted: #69645d; --room-line: #d9d3c9; --room-accent: #663d52; --room-surface: #fdfbf7; }
+@media (prefers-color-scheme: dark) { :root { --room-paper: #1d1c1b; --room-ink: #f0ece4; --room-muted: #b9b3aa; --room-line: #49433e; --room-accent: #e5b5cd; --room-surface: #252321; } }
+.lattiq-shell { min-height: 100svh; padding: 0 clamp(1.25rem, 5vw, 5rem); background: var(--room-paper); color: var(--room-ink); }
+.lattiq-shell a { text-decoration: none; }
+.lattiq-shell a:focus-visible, .writing-room button:focus-visible { outline: 2px solid var(--room-accent); outline-offset: 5px; }
+.lattiq-nav, .room-footer { max-width: 1240px; margin: auto; display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; }
+.lattiq-nav { min-height: 100px; border-bottom: 1px solid var(--room-line); }
+.lattiq-wordmark { display: inline-flex; gap: 0.7rem; align-items: center; font-size: 1.2rem; font-weight: 600; letter-spacing: -0.06em; }
+.lattiq-mark { display: grid; place-items: center; width: 36px; height: 36px; border: 1px solid currentColor; border-radius: 50%; font: italic 23px Georgia, serif; letter-spacing: -0.18em; padding-right: 4px; }
+.lattiq-edition { margin-left: 1rem; padding-left: 1.5rem; border-left: 1px solid var(--room-line); color: var(--room-muted); font-size: 0.75rem; font-weight: 400; letter-spacing: 0; }
+.quiet-link { display: inline-flex; align-items: center; gap: 0.7rem; min-height: 44px; font-size: 0.8rem; color: var(--room-muted); }
+.quiet-link:hover { color: var(--room-accent); }
+.room-intro { display: grid; grid-template-columns: 1.4fr 0.8fr; align-items: center; gap: clamp(2rem, 8vw, 8rem); max-width: 1240px; margin: auto; padding: clamp(3rem, 7vw, 7rem) 0; }
+.room-eyebrow { font: 0.65rem/1.5 ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; color: var(--room-muted); }
+.room-intro h1 { font: clamp(3.4rem, 6.4vw, 6.5rem)/1.03 Georgia, 'Times New Roman', serif; letter-spacing: -0.065em; margin: 1.5rem 0; }
+.room-intro h1 em { font-weight: 400; color: var(--room-accent); }
+.room-deck { max-width: 36rem; font-size: clamp(1rem, 1.35vw, 1.125rem); line-height: 1.85; color: var(--room-muted); }
+.room-primary { display: inline-flex; align-items: center; gap: 2rem; min-height: 52px; margin-top: 1.75rem; padding: 0.85rem 1.3rem; border-radius: 5px; background: var(--room-ink); color: var(--room-paper); font-size: 0.85rem; }
+.room-primary:hover { background: var(--room-accent); }
+.room-mode { margin-top: 1rem; color: var(--room-muted); font-size: 0.7rem; }
+.room-note { border-top: 2px solid var(--room-accent); border-bottom: 1px solid var(--room-line); padding: 1.5rem 0; }
+.room-note h2 { margin: 1.1rem 0 0.8rem; font: 1.8rem/1.2 Georgia, serif; letter-spacing: -0.04em; }
+.room-note p { color: var(--room-muted); font-size: 0.85rem; line-height: 1.85; margin-top: 0.8rem; }
+.room-note .room-note-small { margin-top: 1.25rem; font-size: 0.7rem; }
+.room-section { max-width: 1240px; margin: auto; padding: 3rem 0 4rem; border-top: 1px solid var(--room-line); }
+.room-section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 2rem; margin-bottom: 2rem; }
+.room-section-heading h2 { font: clamp(1.9rem, 3vw, 2.75rem)/1.15 Georgia, serif; letter-spacing: -0.045em; margin-top: 0.65rem; }
+.room-section-heading > p { max-width: 21rem; color: var(--room-muted); font-size: 0.8rem; line-height: 1.7; }
+.workspace-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-top: 1px solid var(--room-line); }
+.workspace-link { display: flex; align-items: flex-start; gap: 1.3rem; padding: 1.75rem 1rem; border-bottom: 1px solid var(--room-line); }
+.workspace-link:nth-child(odd) { border-right: 1px solid var(--room-line); padding-left: 0; }
+.workspace-link:nth-child(even) { padding-left: 2rem; padding-right: 0; }
+.workspace-index { font: 0.65rem/1.8 ui-monospace, monospace; color: var(--room-muted); }
+.workspace-link h3 { font-size: 0.95rem; font-weight: 500; }
+.workspace-link p { margin-top: 0.5rem; font-size: 0.8rem; line-height: 1.65; color: var(--room-muted); }
+.workspace-arrow { margin-left: auto; color: var(--room-muted); }
+.workspace-link:hover h3, .workspace-link:hover .workspace-arrow { color: var(--room-accent); }
+.reading-shelf { scroll-margin-top: 2rem; }
+.book-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 3vw, 2.5rem); }
+.book-cover { position: relative; min-height: 330px; padding: 1.75rem; background: #e6dfd0; color: #403c35; border-radius: 3px 9px 9px 3px; display: flex; flex-direction: column; border-left: 7px solid #cbc0ac; }
+.book-link--2 .book-cover { background: #643d52; color: #fff3f5; border-color: #4f2c3e; }
+.book-link--3 .book-cover { background: #d5dece; color: #303e30; border-color: #b6c2ad; }
+.book-kicker { font: 0.6rem/1.5 ui-monospace, monospace; letter-spacing: 0.08em; text-transform: uppercase; opacity: 0.8; }
+.book-cover h3 { font: clamp(1.75rem, 2.8vw, 2.9rem)/1.05 Georgia, serif; letter-spacing: -0.05em; margin: 2rem 0 1rem; }
+.book-author { font-size: 0.75rem; line-height: 1.5; }
+.book-open { display: flex; justify-content: space-between; width: 100%; margin-top: auto; padding-top: 2rem; font-size: 0.7rem; }
+.book-link:hover .book-open { text-decoration: underline; text-underline-offset: 4px; }
+.book-link > p { font-size: 0.75rem; line-height: 1.8; color: var(--room-muted); margin-top: 1rem; max-width: 22rem; }
+.room-footer { border-top: 1px solid var(--room-line); padding: 2rem 0; color: var(--room-muted); font-size: 0.7rem; line-height: 1.8; }
+.room-footer a { color: var(--room-ink); text-decoration: underline; text-underline-offset: 4px; padding: 0.5rem 0; }
+.skip-link { position: absolute; left: 1rem; top: -100px; padding: 1rem; z-index: 20; background: var(--room-ink); color: var(--room-paper); }
+.skip-link:focus { top: 1rem; }
+.writing-room { padding-top: 2rem; padding-bottom: 2rem; }
+.writing-room-inner { max-width: 1000px; margin: auto; }
+.writing-room-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 1.5rem; padding: 0 0 2rem; }
+.writing-room-title { font: clamp(2.25rem, 4vw, 3.5rem)/1.1 Georgia, serif; letter-spacing: -0.045em; }
+.writing-room .editor-container { background: var(--room-surface); border-color: var(--room-line); border-radius: 8px; }
+.writing-room .editor-toolbar { background: var(--room-surface); border-color: var(--room-line); padding: 0.65rem 1rem; }
+.writing-room .toolbar-btn { min-width: 44px; min-height: 44px; color: var(--room-muted); }
+.writing-room .toolbar-btn:hover, .writing-room .toolbar-btn.active { background: color-mix(in oklab, var(--room-accent) 12%, transparent); color: var(--room-accent); }
+.writing-room .editor-input { min-height: 65svh; padding: 2.5rem clamp(1.25rem, 6vw, 5.5rem); caret-color: var(--room-ink); font-size: 1rem; line-height: 1.9; }
+.writing-room .editor-placeholder { top: 2.5rem; left: clamp(1.25rem, 6vw, 5.5rem); }
+.writing-room .editor-input:focus-visible { box-shadow: inset 3px 0 var(--room-accent); }
+.writing-room-footnote { font-size: 0.7rem; color: var(--room-muted); line-height: 1.7; margin-top: 1.25rem; }
+@media (max-width: 700px) {
+  .lattiq-nav { min-height: 80px; }
+  .lattiq-edition { display: none; }
+  .room-intro { grid-template-columns: minmax(0, 1fr); gap: 2.75rem; }
+  .room-section-heading { align-items: flex-start; flex-direction: column; gap: 1rem; }
+  .workspace-grid { grid-template-columns: minmax(0, 1fr); }
+  .workspace-link:nth-child(n) { border-right: 0; padding: 1.4rem 0; }
+  .book-grid { grid-template-columns: minmax(0, 1fr); gap: 2rem; }
+  .book-cover { min-height: 300px; }
+  .book-cover h3 { max-width: 14rem; font-size: 2.75rem; }
+  .room-footer { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+}
