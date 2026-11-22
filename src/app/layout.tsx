@@ -7,8 +7,8 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Lattiq",
-  description: "Local-first collaborative editor",
+  title: { default: "Lattiq · A local-first writing room", template: "%s · Lattiq" },
+  description: "A considered writing room with local-first saving, rich-text editing and a shelf of public-domain books. No account needed.",
 };
 
 export default function RootLayout({
